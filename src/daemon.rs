@@ -1,6 +1,6 @@
 use crate::constants::{
     ACTIVE_PLAYER_PROPERTY, DBUS, MPRIS_PATH, MPRIS_PREFIX, PROPERTIES, PROPERTIES_CHANGED,
-    WELL_KNOWN_NAME, WELL_KNOWN_PATH,
+    SHIFT_METHOD, UNSHIFT_METHOD, WELL_KNOWN_NAME, WELL_KNOWN_PATH,
 };
 use dbus::Message;
 use dbus::arg::{RefArg, Variant, prop_cast};
@@ -10,6 +10,7 @@ use dbus::nonblock::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged;
 use dbus::nonblock::{MsgMatch, Proxy, SyncConnection};
 use dbus_tokio::connection;
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -65,6 +66,14 @@ impl Players {
         self.queue.retain(|e| e != &name);
         self.queue.insert(0, name);
     }
+
+    fn shift(&mut self) {
+        self.queue.rotate_right(1);
+    }
+
+    fn unshift(&mut self) {
+        self.queue.rotate_left(1);
+    }
 }
 
 #[derive(Clone)]
@@ -101,8 +110,9 @@ impl Daemon {
         self.listen_for_player_changes().await?;
         self.find_existing_players().await?;
         let _m0 = self.listen_for_property_gets().await?;
-        let _m1 = self.await_player_changes().await?;
-        let _m2 = self.await_player_queue_changes().await;
+        let _m1 = self.listen_for_methods().await?;
+        let _m2 = self.await_player_changes().await?;
+        let _m3 = self.await_player_queue_changes().await;
         unreachable!()
     }
 
@@ -248,6 +258,29 @@ impl Daemon {
 
                 true
             });
+
+        Ok(m)
+    }
+
+    async fn listen_for_methods(&self) -> Result<MsgMatch, dbus::Error> {
+        let daemon = self.clone();
+        let mr = MatchRule::new_method_call()
+            .with_path(WELL_KNOWN_PATH)
+            .with_interface(WELL_KNOWN_NAME);
+
+        let m = self.connection.add_match(mr).await?.cb(move |req, (): ()| {
+            if let Some(command) = req.member() {
+                if command.deref() == SHIFT_METHOD {
+                    daemon.players.write().unwrap().shift();
+                    daemon.players_changed.notify_one();
+                } else if command.deref() == UNSHIFT_METHOD {
+                    daemon.players.write().unwrap().unshift();
+                    daemon.players_changed.notify_one();
+                }
+            }
+
+            true
+        });
 
         Ok(m)
     }
