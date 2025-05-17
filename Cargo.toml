@@ -1,0 +1,10 @@
+[package]
+name = "player_watcher"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dbus = { version = "0.9.7", features = ["futures"] }
+tokio = { version = "1.45.0", features = ["rt", "rt-multi-thread", "macros", "signal", "sync"] }
+dbus-tokio = "0.7.6"
+clap = { version = "4.5.38", features = ["derive"] }
