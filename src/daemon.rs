@@ -1,8 +1,9 @@
 use crate::constants::{
-    ACTIVE_CHANGED_SIGNAL, DBUS, MPRIS_PATH, MPRIS_PREFIX, PROPERTIES, WELL_KNOWN_NAME,
+    ACTIVE_PLAYER_PROPERTY, DBUS, MPRIS_PATH, MPRIS_PREFIX, PROPERTIES, PROPERTIES_CHANGED,
+    WELL_KNOWN_NAME, WELL_KNOWN_PATH,
 };
 use dbus::Message;
-use dbus::arg::prop_cast;
+use dbus::arg::{RefArg, Variant, prop_cast};
 use dbus::channel::Sender;
 use dbus::message::MatchRule;
 use dbus::nonblock::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged;
@@ -99,6 +100,7 @@ impl Daemon {
     pub async fn run(&self) -> Result<(), dbus::Error> {
         self.listen_for_player_changes().await?;
         self.find_existing_players().await?;
+        let _m0 = self.listen_for_property_gets().await?;
         let _m1 = self.await_player_changes().await?;
         let _m2 = self.await_player_queue_changes().await;
         unreachable!()
@@ -141,9 +143,19 @@ impl Daemon {
 
             if active != last_sent {
                 last_sent = active.clone();
-                let msg = Message::new_signal("/", WELL_KNOWN_NAME, ACTIVE_CHANGED_SIGNAL)
-                    .unwrap()
-                    .append1(active.to_string());
+
+                let active: Box<(dyn RefArg + 'static)> = Box::new(active.to_string());
+                let props = PropertiesPropertiesChanged {
+                    interface_name: WELL_KNOWN_NAME.to_string(),
+                    changed_properties: HashMap::from([(
+                        ACTIVE_PLAYER_PROPERTY.to_string(),
+                        Variant(active),
+                    )]),
+                    invalidated_properties: vec![],
+                };
+                let mut msg =
+                    Message::new_signal(WELL_KNOWN_PATH, PROPERTIES, PROPERTIES_CHANGED).unwrap();
+                msg.append_all(props);
 
                 self.connection.send(msg).unwrap();
             }
@@ -178,7 +190,7 @@ impl Daemon {
 
     async fn await_player_changes(&self) -> Result<MsgMatch, dbus::Error> {
         let daemon = self.clone();
-        let mr = MatchRule::new_signal(PROPERTIES, "PropertiesChanged").with_path(MPRIS_PATH);
+        let mr = MatchRule::new_signal(PROPERTIES, PROPERTIES_CHANGED).with_path(MPRIS_PATH);
         let m = self.connection.add_match(mr).await?.cb(
             move |msg, props: PropertiesPropertiesChanged| {
                 let mut player = Arc::<str>::from("");
@@ -204,6 +216,38 @@ impl Daemon {
                 true
             },
         );
+
+        Ok(m)
+    }
+
+    async fn listen_for_property_gets(&self) -> Result<MsgMatch, dbus::Error> {
+        let daemon = self.clone();
+        let mr = MatchRule::new_method_call()
+            .with_path(WELL_KNOWN_PATH)
+            .with_interface(PROPERTIES)
+            .with_member("Get");
+
+        let m = self
+            .connection
+            .add_match(mr)
+            .await?
+            .cb(move |req, (_, name): (String, String)| {
+                if name == ACTIVE_PLAYER_PROPERTY {
+                    let resp = daemon
+                        .players
+                        .read()
+                        .unwrap()
+                        .get_active()
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                    let msg = Message::new_method_return(&req)
+                        .unwrap()
+                        .append1(Variant(resp));
+                    daemon.connection.send(msg).unwrap();
+                }
+
+                true
+            });
 
         Ok(m)
     }
