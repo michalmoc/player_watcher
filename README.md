@@ -35,6 +35,12 @@ $ player_watcher shift
 $ player_watcher unshift
 ```
 
+There is also a simple wrapper for playerctl:
+
+```shell
+$ playerctl_auto play-pause
+```
+
 # Why
 
 So I can use `playerctl` or similar tools on the exact player I'm using now,

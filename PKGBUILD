@@ -24,6 +24,6 @@ package() {
     usrdir="$pkgdir/usr"
     mkdir -p $usrdir
     cargo install --no-track --path . --root "$usrdir"
-    cp scripts "$usrdir/bin"
+    cp scripts/playerctl_auto "$usrdir/bin"
 }
 
