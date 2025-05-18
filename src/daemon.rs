@@ -6,7 +6,9 @@ use dbus::Message;
 use dbus::arg::{RefArg, Variant, prop_cast};
 use dbus::channel::Sender;
 use dbus::message::MatchRule;
-use dbus::nonblock::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged;
+use dbus::nonblock::stdintf::org_freedesktop_dbus::{
+    PropertiesPropertiesChanged, RequestNameReply,
+};
 use dbus::nonblock::{MsgMatch, Proxy, SyncConnection};
 use dbus_tokio::connection;
 use std::collections::{HashMap, HashSet};
@@ -68,11 +70,15 @@ impl Players {
     }
 
     fn shift(&mut self) {
-        self.queue.rotate_right(1);
+        if !self.queue.is_empty() {
+            self.queue.rotate_right(1);
+        }
     }
 
     fn unshift(&mut self) {
-        self.queue.rotate_left(1);
+        if !self.queue.is_empty() {
+            self.queue.rotate_left(1);
+        }
     }
 }
 
@@ -95,9 +101,13 @@ impl Daemon {
             panic!("Lost connection to D-Bus: {}", err);
         });
 
-        connection
-            .request_name(WELL_KNOWN_NAME, false, false, false)
+        let reply = connection
+            .request_name(WELL_KNOWN_NAME, false, false, true)
             .await?;
+
+        if reply != RequestNameReply::PrimaryOwner {
+            panic!("Already running");
+        }
 
         Ok(Self {
             connection,
@@ -107,12 +117,20 @@ impl Daemon {
     }
 
     pub async fn run(&self) -> Result<(), dbus::Error> {
-        self.listen_for_player_changes().await?;
+        let m0 = self.listen_for_player_changes().await?;
         self.find_existing_players().await?;
-        let _m0 = self.listen_for_property_gets().await?;
-        let _m1 = self.listen_for_methods().await?;
-        let _m2 = self.await_player_changes().await?;
-        let _m3 = self.await_player_queue_changes().await;
+        let m1 = self.listen_for_property_gets().await?;
+        let m2 = self.listen_for_methods().await?;
+        let m3 = self.listen_for_status_changes().await?;
+        self.await_player_queue_changes().await;
+
+        // unreachable, await_player_queue_changes() is endless loop
+
+        self.connection.remove_match(m3.token()).await?;
+        self.connection.remove_match(m2.token()).await?;
+        self.connection.remove_match(m1.token()).await?;
+        self.connection.remove_match(m0.token()).await?;
+
         unreachable!()
     }
 
@@ -198,7 +216,7 @@ impl Daemon {
         Ok(m)
     }
 
-    async fn await_player_changes(&self) -> Result<MsgMatch, dbus::Error> {
+    async fn listen_for_status_changes(&self) -> Result<MsgMatch, dbus::Error> {
         let daemon = self.clone();
         let mr = MatchRule::new_signal(PROPERTIES, PROPERTIES_CHANGED).with_path(MPRIS_PATH);
         let m = self.connection.add_match(mr).await?.cb(
