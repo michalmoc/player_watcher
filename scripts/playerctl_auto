@@ -8,4 +8,4 @@ then
   exit
 fi
 
-playerctl -p "$PLAYER" "$@"
+exec playerctl -p "$PLAYER" "$@"
