@@ -177,6 +177,14 @@ impl Data {
         }
     }
 
+    fn escape(s: &str) -> String {
+        s.replace("\"", "\\\"")
+    }
+
+    fn read_string(v: Variant<Box<dyn RefArg>>) -> String {
+        Self::escape(&Self::vec_or_str(v))
+    }
+
     fn change_metadata(&mut self, props: arg::PropMap, invalidated_properties: Vec<String>) {
         for prop in invalidated_properties {
             match prop.as_str() {
@@ -196,14 +204,14 @@ impl Data {
         for (prop, value) in props {
             match prop.as_str() {
                 "mpris:length" => self.length = Some(Self::read_len(value)),
-                "xesam:album" => self.album = Some(value.as_str().unwrap().to_owned()),
-                "xesam:albumArtist" => self.album_artist = Some(Self::vec_or_str(value)),
-                "mpris:artUrl" => self.art_url = Some(value.as_str().unwrap().to_owned()),
-                "xesam:title" => self.title = Some(value.as_str().unwrap().to_owned()),
+                "xesam:album" => self.album = Some(Self::read_string(value)),
+                "xesam:albumArtist" => self.album_artist = Some(Self::read_string(value)),
+                "mpris:artUrl" => self.art_url = Some(Self::read_string(value)),
+                "xesam:title" => self.title = Some(Self::read_string(value)),
                 "xesam:trackNumber" => self.track_number = Some(value.as_i64().unwrap() as i32),
                 "xesam:discNumber" => self.disc_number = Some(value.as_i64().unwrap() as i32),
-                "xesam:url" => self.url = Some(value.as_str().unwrap().to_owned()),
-                "xesam:artist" => self.artist = Some(Self::vec_or_str(value)),
+                "xesam:url" => self.url = Some(Self::read_string(value)),
+                "xesam:artist" => self.artist = Some(Self::read_string(value)),
                 _ => (),
             }
         }

@@ -1,6 +1,6 @@
 # Maintainer: Michał Moczulski
 pkgname=player_watcher
-pkgver=0.1.0.r0.gd7fdcd3
+pkgver=0.2.0.r0.gd7fdcd3
 pkgrel=1
 pkgdesc="Track which media player is currently active via MPRIS."
 url="https://github.com/michalmoc/player_watcher"
@@ -23,7 +23,6 @@ package() {
     cd "$srcdir/player_watcher"
     usrdir="$pkgdir/usr"
     mkdir -p $usrdir
-    cargo install --no-track --path . --root "$usrdir"
-    cp scripts/playerctl_auto "$usrdir/bin"
+    cargo install --no-track --path . --root "$usrdir" --profile release
 }
 
