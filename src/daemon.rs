@@ -1,7 +1,8 @@
 use crate::constants::{
-    ACTIVE_PLAYER_PROPERTY, DBUS, MPRIS_PATH, MPRIS_PREFIX, PROPERTIES, PROPERTIES_CHANGED,
-    SHIFT_METHOD, UNSHIFT_METHOD, WELL_KNOWN_NAME, WELL_KNOWN_PATH,
+    ACTIVE_PLAYER_PROPERTY, DBUS, MPRIS_PATH, PROPERTIES, PROPERTIES_CHANGED, SHIFT_METHOD,
+    UNSHIFT_METHOD, WELL_KNOWN_NAME, WELL_KNOWN_PATH,
 };
+use crate::players::{Players, is_player};
 use dbus::Message;
 use dbus::arg::{RefArg, Variant, prop_cast};
 use dbus::channel::Sender;
@@ -9,59 +10,50 @@ use dbus::message::MatchRule;
 use dbus::nonblock::stdintf::org_freedesktop_dbus::{
     PropertiesPropertiesChanged, RequestNameReply,
 };
-use dbus::nonblock::{MsgMatch, Proxy, SyncConnection};
+use dbus::nonblock::{MsgMatch, SyncConnection};
 use dbus_tokio::connection;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 use tokio::sync::Notify;
 
-fn is_player(name: &str) -> bool {
-    name.starts_with(MPRIS_PREFIX)
-}
-
 #[derive(Default)]
-struct Players {
-    players: HashMap<Arc<str>, HashSet<Arc<str>>>,
-    rev_players: HashMap<Arc<str>, Arc<str>>,
+struct PlayersQueue {
+    players: Players,
     queue: Vec<Arc<str>>,
 }
 
-impl Players {
-    fn get_active(&self) -> Option<&Arc<str>> {
-        self.queue.first()
+impl PlayersQueue {
+    pub async fn find_existing(
+        &mut self,
+        connection: Arc<SyncConnection>,
+    ) -> Result<(), dbus::Error> {
+        self.queue = self.players.find_existing(connection).await?;
+
+        Ok(())
+    }
+
+    fn get_active(&self) -> Option<Arc<str>> {
+        self.queue.first().cloned()
     }
 
     fn add_player(&mut self, name: Arc<str>, channels: Vec<Arc<str>>) {
-        for channel in &channels {
-            self.rev_players.insert(channel.clone(), name.clone());
-        }
-        if self
-            .players
-            .insert(name.clone(), HashSet::from_iter(channels))
-            .is_none()
-        {
+        if self.players.add(name.clone(), channels) {
             if self.queue.is_empty() {
                 self.queue.push(name.clone());
             } else {
-                self.queue.insert(1, name);
+                self.queue.insert(0, name);
             }
         }
     }
 
     fn remove_player(&mut self, name: Arc<str>) {
-        if let Some(channels) = self.players.remove(&name) {
-            for channel in channels {
-                self.rev_players.remove(&channel);
-            }
-
-            self.queue.retain(|e| e != &name);
-        }
+        self.players.remove(name.clone());
+        self.queue.retain(|e| e != &name);
     }
 
-    fn find_by_channel(&self, channel: &str) -> Option<&Arc<str>> {
-        self.rev_players.get(channel)
+    fn find_by_channel(&self, channel: &str) -> Option<Arc<str>> {
+        self.players.find_by_channel(channel)
     }
 
     fn promote(&mut self, name: Arc<str>) {
@@ -80,18 +72,22 @@ impl Players {
             self.queue.rotate_left(1);
         }
     }
+
+    pub fn get_channels(&self, name: Arc<str>) -> Option<HashSet<Arc<str>>> {
+        self.players.get_channels(name).cloned()
+    }
 }
 
 #[derive(Clone)]
 pub struct Daemon {
     connection: Arc<SyncConnection>,
-    players: Arc<RwLock<Players>>,
+    players: Arc<RwLock<PlayersQueue>>,
     players_changed: Arc<Notify>,
 }
 
 impl Daemon {
     pub async fn new() -> Result<Self, dbus::Error> {
-        let players = Arc::new(RwLock::new(Players::default()));
+        let players = Arc::new(RwLock::new(PlayersQueue::default()));
         let players_changed = Arc::new(Notify::new());
 
         let (resource, connection) = connection::new_session_sync()?;
@@ -116,9 +112,16 @@ impl Daemon {
         })
     }
 
-    pub async fn run(&self) -> Result<(), dbus::Error> {
-        let m0 = self.listen_for_player_changes().await?;
-        self.find_existing_players().await?;
+    pub async fn run(&mut self) -> Result<(), dbus::Error> {
+        let m0 = self
+            .listen_for_player_changes(self.connection.clone())
+            .await?;
+        self.players
+            .write()
+            .unwrap()
+            .find_existing(self.connection.clone())
+            .await?;
+        self.players_changed.notify_one();
         let m1 = self.listen_for_property_gets().await?;
         let m2 = self.listen_for_methods().await?;
         let m3 = self.listen_for_status_changes().await?;
@@ -134,25 +137,36 @@ impl Daemon {
         unreachable!()
     }
 
-    async fn find_existing_players(&self) -> Result<(), dbus::Error> {
-        let proxy = Proxy::new(DBUS, "/", Duration::from_secs(5), self.connection.clone());
+    pub async fn listen_for_player_changes(
+        &self,
+        connection: Arc<SyncConnection>,
+    ) -> Result<MsgMatch, dbus::Error> {
+        let cloned = self.clone();
+        let mr = MatchRule::new_signal(DBUS, "NameOwnerChanged");
+        let m = connection.add_match(mr).await?.cb(
+            move |_, (name, old_owner, new_owner): (String, String, String)| {
+                if is_player(&name) {
+                    assert_ne!(old_owner.is_empty(), new_owner.is_empty());
+                    println!("new player {:?}", new_owner);
 
-        let (names,): (Vec<String>,) = proxy.method_call(DBUS, "ListNames", ()).await?;
+                    let name: Arc<str> = name.into();
+                    if old_owner.is_empty() {
+                        cloned
+                            .players
+                            .write()
+                            .unwrap()
+                            .add_player(name.clone(), vec![new_owner.into()]);
+                        // TODO: check playback status
+                    } else {
+                        cloned.players.write().unwrap().remove_player(name.clone());
+                    }
+                    cloned.players_changed.notify_one();
+                }
+                true
+            },
+        );
 
-        for name in names {
-            if is_player(&name) {
-                let (owners,): (Vec<String>,) = proxy
-                    .method_call(DBUS, "ListQueuedOwners", (&name,))
-                    .await?;
-                self.players
-                    .write()
-                    .unwrap()
-                    .add_player(name.into(), owners.into_iter().map(Into::into).collect());
-                self.players_changed.notify_one();
-            }
-        }
-
-        Ok(())
+        Ok(m)
     }
 
     async fn await_player_queue_changes(&self) {
@@ -166,7 +180,6 @@ impl Daemon {
                 .read()
                 .unwrap()
                 .get_active()
-                .cloned()
                 .unwrap_or_default();
 
             if active != last_sent {
@@ -188,32 +201,6 @@ impl Daemon {
                 self.connection.send(msg).unwrap();
             }
         }
-    }
-
-    async fn listen_for_player_changes(&self) -> Result<MsgMatch, dbus::Error> {
-        let daemon = self.clone();
-        let mr = MatchRule::new_signal(DBUS, "NameOwnerChanged");
-        let m = self.connection.add_match(mr).await?.cb(
-            move |_, (name, old_owner, new_owner): (String, String, String)| {
-                if is_player(&name) {
-                    assert_ne!(old_owner.is_empty(), new_owner.is_empty());
-                    if old_owner.is_empty() {
-                        daemon
-                            .players
-                            .write()
-                            .unwrap()
-                            .add_player(name.into(), vec![new_owner.into()]);
-                        daemon.players_changed.notify_one();
-                    } else {
-                        daemon.players.write().unwrap().remove_player(name.into());
-                        daemon.players_changed.notify_one();
-                    }
-                }
-                true
-            },
-        );
-
-        Ok(m)
     }
 
     async fn listen_for_status_changes(&self) -> Result<MsgMatch, dbus::Error> {
@@ -266,11 +253,24 @@ impl Daemon {
                         .read()
                         .unwrap()
                         .get_active()
+                        .as_ref()
                         .map(ToString::to_string)
                         .unwrap_or_default();
-                    let msg = Message::new_method_return(&req)
+                    let channels = daemon
+                        .players
+                        .read()
                         .unwrap()
-                        .append1(Variant(resp));
+                        .get_channels(resp.clone().into());
+                    let msg = if let Some(channels) = channels {
+                        Message::new_method_return(&req).unwrap().append1(Variant((
+                            resp,
+                            Vec::from_iter(channels.iter().map(|s| s.to_string())),
+                        )))
+                    } else {
+                        Message::new_method_return(&req)
+                            .unwrap()
+                            .append1(Variant((resp, Vec::<String>::new())))
+                    };
                     daemon.connection.send(msg).unwrap();
                 }
 
