@@ -33,7 +33,6 @@ async fn listen_for_metadata(
     data: Arc<Mutex<Data>>,
 ) -> Result<(), dbus::Error> {
     let player = data.lock().await.player_name.clone();
-    println!("listening for {}", player);
 
     if player != "" {
         let data_clone = data.clone();
