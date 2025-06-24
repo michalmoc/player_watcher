@@ -17,16 +17,17 @@ use tokio::sync::Mutex;
 
 async fn change_metadata(
     changed_properties: arg::PropMap,
-    invalidated_properties: Vec<String>,
     data: Arc<Mutex<Data>>,
 ) -> Result<(), dbus::Error> {
     let mut data = data.lock().await;
 
-    data.change_metadata(changed_properties, invalidated_properties);
+    data.change_metadata(changed_properties);
     println!("{}", data);
 
     Ok(())
 }
+
+// TODO: follow status
 
 async fn listen_for_metadata(
     connection: Arc<SyncConnection>,
@@ -46,9 +47,9 @@ async fn listen_for_metadata(
             .cb(move |_, props: PropertiesPropertiesChanged| {
                 tokio::spawn(change_metadata(
                     props.changed_properties,
-                    props.invalidated_properties,
                     data_clone.clone(),
                 ));
+
                 true
             });
         let mut data = data.lock().await;
@@ -89,7 +90,7 @@ async fn change_player(
         .await?;
     {
         let mut data = data.lock().await;
-        data.change_metadata(props, vec![]);
+        data.change_metadata(props);
         println!("{}", data);
     }
 
@@ -152,7 +153,7 @@ impl Data {
         self.artist = None;
     }
 
-    fn vec_or_str(v: Variant<Box<dyn RefArg>>) -> String {
+    fn vec_or_str(v: &Variant<Box<dyn RefArg>>) -> String {
         if let Some(v) = v.as_str() {
             v.to_owned()
         } else {
@@ -165,7 +166,7 @@ impl Data {
         }
     }
 
-    fn read_len(v: Variant<Box<dyn RefArg>>) -> i32 {
+    fn read_len(v: &Variant<Box<dyn RefArg>>) -> i32 {
         if let Some(v) = v.as_u64() {
             v as i32
         } else if let Some(v) = v.as_i64() {
@@ -180,25 +181,16 @@ impl Data {
         s.replace("\"", "\\\"")
     }
 
-    fn read_string(v: Variant<Box<dyn RefArg>>) -> String {
+    fn read_string(v: &Variant<Box<dyn RefArg>>) -> String {
         Self::escape(&Self::vec_or_str(v))
     }
 
-    fn change_metadata(&mut self, props: arg::PropMap, invalidated_properties: Vec<String>) {
-        for prop in invalidated_properties {
-            match prop.as_str() {
-                "mpris:length" => self.length = None,
-                "xesam:album" => self.album = None,
-                "xesam:albumArtist" => self.album_artist = None,
-                "mpris:artUrl" => self.art_url = None,
-                "xesam:title" => self.title = None,
-                "xesam:trackNumber" => self.track_number = None,
-                "xesam:discNumber" => self.disc_number = None,
-                "xesam:url" => self.url = None,
-                "xesam:artist" => self.artist = None,
-                _ => (),
-            }
-        }
+    fn change_metadata(&mut self, props: arg::PropMap) {
+        let props = if let Some(metadata) = arg::prop_cast::<arg::PropMap>(&props, "Metadata") {
+            metadata
+        } else {
+            &props
+        };
 
         for (prop, value) in props {
             match prop.as_str() {
