@@ -76,10 +76,11 @@ async fn change_player(
     {
         let mut data = data.lock().await;
         data.change_player(new_player_name.clone());
-    }
 
-    if new_player_name.is_empty() {
-        return Ok(());
+        if new_player_name.is_empty() {
+            println!("{}", data);
+            return Ok(());
+        }
     }
 
     let proxy = Proxy::new(
