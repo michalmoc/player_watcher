@@ -100,6 +100,7 @@ impl Daemon {
 
         self.players.write().unwrap().add(name.clone(), channels);
         self.queue.write().unwrap().add_player(name, playing);
+        self.notify_of_new_active();
 
         Ok(())
     }
@@ -107,6 +108,7 @@ impl Daemon {
     async fn remove(&mut self, name: &str) -> Result<(), dbus::Error> {
         self.players.write().unwrap().remove(name);
         self.queue.write().unwrap().remove_player(name);
+        self.notify_of_new_active();
 
         Ok(())
     }
