@@ -133,6 +133,8 @@ struct Data {
     player_name: String,
     metadata_listen: Option<MsgMatch>,
 
+    playing: bool,
+
     length: Option<i32>,
     album: Option<String>,
     album_artist: Option<String>,
@@ -147,6 +149,7 @@ struct Data {
 impl Data {
     fn change_player(&mut self, name: String) {
         self.player_name = name;
+        self.playing = false;
         self.length = None;
         self.album = None;
         self.album_artist = None;
@@ -191,6 +194,11 @@ impl Data {
     }
 
     fn change_metadata(&mut self, props: arg::PropMap) {
+        if let Some(playback) = arg::prop_cast::<String>(&props, "PlaybackStatus") {
+            self.playing = playback == "Playing";
+            return;
+        }
+
         let props = if let Some(metadata) = arg::prop_cast::<arg::PropMap>(&props, "Metadata") {
             metadata
         } else {
@@ -238,6 +246,7 @@ impl Display for Data {
             "\
         {{ \
         \"player\": \"{}\", \
+        \"playing\": \"{}\", \
         \"length\": \"{}\", \
         \"album\": \"{}\", \
         \"album_artist\": \"{}\", \
@@ -250,6 +259,7 @@ impl Display for Data {
          }}\
         ",
             self.player_name,
+            self.playing,
             length,
             album,
             album_artist,
