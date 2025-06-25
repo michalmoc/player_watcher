@@ -35,11 +35,30 @@ impl PlayersQueue {
         self.playing.remove(name);
     }
 
-    pub fn promote(&mut self, name: Arc<str>) {
+    #[must_use]
+    pub fn promote(&mut self, name: Arc<str>) -> bool {
         if let Some(idx) = self.queue.iter().rposition(|n| *n == name) {
-            self.queue[0..=idx].rotate_right(1);
+            self.set_playing(name, true);
+            if idx > 0 {
+                self.queue[0..=idx].rotate_right(1);
+                true
+            } else {
+                false
+            }
         } else {
-            eprintln!("player for promotion not found")
+            eprintln!("player for promotion not found");
+            false
+        }
+    }
+
+    #[must_use]
+    pub fn demote(&mut self, name: Arc<str>) -> bool {
+        self.set_playing(name, false);
+        if let Some(idx) = self.queue.iter().position(|n| self.playing.contains(n)) {
+            self.queue[0..=idx].rotate_right(1);
+            true
+        } else {
+            false
         }
     }
 

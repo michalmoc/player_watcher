@@ -244,7 +244,10 @@ impl Daemon {
 
                 // must be outside `if let` to prevent deadlock of daemon.players
                 if status == "Playing" {
-                    daemon.queue.write().unwrap().promote(player);
+                    if daemon.queue.write().unwrap().promote(player) {
+                        daemon.notify_of_new_active();
+                    }
+                } else if daemon.queue.write().unwrap().demote(player) {
                     daemon.notify_of_new_active();
                 }
 
