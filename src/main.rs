@@ -4,6 +4,7 @@ mod daemon;
 mod follow;
 mod get;
 mod players;
+mod players_queue;
 mod shift;
 
 use crate::control::control;

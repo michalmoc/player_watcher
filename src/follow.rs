@@ -301,7 +301,6 @@ pub async fn follow_changes() -> Result<(), dbus::Error> {
     let player_listen = listen_for_player_changes(connection.clone(), data.clone()).await?;
 
     signal::ctrl_c().await.expect("failed to listen for event");
-    println!("ctrlc");
 
     connection.remove_match(player_listen.token()).await?;
 
