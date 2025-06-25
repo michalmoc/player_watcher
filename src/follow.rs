@@ -99,6 +99,15 @@ async fn change_player(
         println!("{}", data);
     }
 
+    let props = proxy
+        .get::<String>(MPRIS_PLAYER_ITF, "PlaybackStatus")
+        .await?;
+    {
+        let mut data = data.lock().await;
+        data.change_status(&props);
+        println!("{}", data);
+    }
+
     listen_for_metadata(connection.clone(), data.clone()).await?;
 
     Ok(())
@@ -195,7 +204,7 @@ impl Data {
 
     fn change_metadata(&mut self, props: arg::PropMap) {
         if let Some(playback) = arg::prop_cast::<String>(&props, "PlaybackStatus") {
-            self.playing = playback == "Playing";
+            self.change_status(playback);
             return;
         }
 
@@ -219,6 +228,10 @@ impl Data {
                 _ => (),
             }
         }
+    }
+
+    fn change_status(&mut self, status: &str) {
+        self.playing = status == "Playing";
     }
 }
 
