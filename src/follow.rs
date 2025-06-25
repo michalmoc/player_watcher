@@ -78,6 +78,10 @@ async fn change_player(
         data.change_player(new_player_name.clone());
     }
 
+    if new_player_name.is_empty() {
+        return Ok(());
+    }
+
     let proxy = Proxy::new(
         new_player_name,
         MPRIS_PATH,
