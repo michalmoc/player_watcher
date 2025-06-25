@@ -96,7 +96,6 @@ async fn change_player(
     {
         let mut data = data.lock().await;
         data.change_metadata(props);
-        println!("{}", data);
     }
 
     let props = proxy
